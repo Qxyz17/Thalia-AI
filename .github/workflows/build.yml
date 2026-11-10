@@ -17,6 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-openssl
+
       - name: Install OpenSSL (Ubuntu)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
@@ -25,22 +35,29 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install openssl@3
 
-      - name: Build
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            # The runner ships MSYS2 at C:\msys64; use its mingw64 toolchain.
-            export PATH="/c/msys64/mingw64/bin:$PATH"
-          fi
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            # Homebrew OpenSSL is keg-only: point the compiler at it.
-            export CPLUS_INCLUDE_PATH=/opt/homebrew/opt/openssl@3/include
-            export LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib
-          fi
-          bash scripts/build.sh
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build.sh
 
-      - name: Test
-        shell: bash
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: bash scripts/build.sh
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CPLUS_INCLUDE_PATH: /opt/homebrew/opt/openssl@3/include
+          LIBRARY_PATH: /opt/homebrew/opt/openssl@3/lib
+        run: bash scripts/build.sh
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash tests/run_tests.sh
+
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
         run: bash tests/run_tests.sh
 
   release:
