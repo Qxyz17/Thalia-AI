@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSSL (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: brew install openssl@3
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # The runner ships MSYS2 at C:\msys64; use its mingw64 toolchain.
+            export PATH="/c/msys64/mingw64/bin:$PATH"
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # Homebrew OpenSSL is keg-only: point the compiler at it.
+            export CPLUS_INCLUDE_PATH=/opt/homebrew/opt/openssl@3/include
+            export LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib
+          fi
+          bash scripts/build.sh
+
+      - name: Test
+        shell: bash
+        run: bash tests/run_tests.sh
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Linux binary
+        run: |
+          sudo apt-get update && sudo apt-get install -y libssl-dev
+          bash scripts/build.sh
+          strip build/thalia
+          tar -czf thalia-linux-x86_64.tar.gz -C build thalia
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: thalia-linux-x86_64.tar.gz
+          generate_release_notes: true

@@ -1,0 +1,6 @@
+build/
+thalia_data/
+test_data/
+tmpd/
+*.o
+*.exe
