@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")/.."
 mkdir -p build
 SRCS="src/hdc.cpp src/tokenize.cpp src/encoder.cpp src/self.cpp src/memory.cpp \
-src/semantics.cpp src/engine.cpp src/speaker.cpp src/main.cpp"
+src/semantics.cpp src/inference.cpp src/engine.cpp src/speaker.cpp src/main.cpp"
 # On Windows a dynamic build needs libcrypto/libgcc/libstdc++ DLLs next to
 # the exe; link statically so build/thalia runs on a bare system.
 case "$(uname -s)" in

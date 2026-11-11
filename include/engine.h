@@ -10,6 +10,7 @@
 #pragma once
 #include "encoder.h"
 #include "hdc.h"
+#include "inference.h"
 #include "memory.h"
 #include "self.h"
 #include "semantics.h"
@@ -57,6 +58,9 @@ public:
     // The lexical statistics (co-occurrence semantics).
     Semantics& semantics() { return sem_; }
 
+    // Facts heard and the deductions they license.
+    Inference& inference() { return infer_; }
+
     Self&    self()    { return self_; }
     Memory&  memory()  { return memory_; }
 
@@ -71,10 +75,11 @@ public:
     void feedback_bad (const std::string& key, double amount = 0.3);
 
 private:
-    Self     self_;
-    Memory   memory_;
+    Self      self_;
+    Memory    memory_;
     Semantics sem_;
-    Speaker  voice_;
+    Speaker   voice_;
+    Inference infer_;
 
     struct LexEntry { std::string name; HdcVec vec; };
     std::vector<LexEntry> lexicon_;

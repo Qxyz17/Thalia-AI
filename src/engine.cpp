@@ -1,6 +1,7 @@
 // Thalia - Engine implementation
 #include "engine.h"
 #include "encoder.h"
+#include "tokenize.h"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -9,6 +10,30 @@
 namespace thalia {
 
 constexpr double DIRECT_HIT_THRESHOLD = 0.85;  // sim above this = "I know this"
+
+// The thing a sentence is about, when it asks a question about something
+// Thalia has facts on. Leading interrogatives are dropped; the first
+// content run left is the topic. "猫 会 什么" -> "猫".
+static std::string question_topic(const std::string& raw) {
+    auto toks = tokenize(raw);
+    // Drop a leading question form.
+    static const char* kLeading[] = {"什么", "为什么", "怎么", "怎样", "谁",
+                                     "哪", "是不是", "会不会", "请", "问",
+                                     "你知道", "告诉我"};
+    size_t i = 0;
+    for (; i < toks.size(); ++i) {
+        if (!is_word_token(toks[i])) continue;
+        bool dropped = false;
+        for (const char* w : kLeading) {
+            if (toks[i] == w) { dropped = true; break; }
+        }
+        if (!dropped) break;
+    }
+    if (i >= toks.size()) return "";
+    std::string topic;
+    for (; i < toks.size() && is_word_token(toks[i]); ++i) topic += toks[i];
+    return topic;
+}
 
 Engine::Engine(const std::string& store_dir, const std::string& identity_seed)
     : self_(identity_seed), memory_(store_dir), sem_(store_dir) {
@@ -152,7 +177,37 @@ Response Engine::perceive(const std::string& kind, const std::string& raw) {
         resp.best_sim = hits.empty() ? 0 : hits[0].sim;
         resp.direct_hit = false;
 
-        if (!speech.empty()) {
+        // Deduction first: if the input names something Thalia holds facts
+        // about, answer from the fact chain instead of walking n-grams.
+        // This is the only path that can produce a sentence it never heard.
+        bool deduced = false;
+        std::string topic = question_topic(raw);
+        if (!topic.empty()) {
+            auto answers = infer_.ask(topic);
+            if (!answers.empty()) {
+                // Prefer a derived answer: that is the one worth showing.
+                const Inference::Answer* pick = &answers.front();
+                for (const auto& a : answers) {
+                    if (a.derived) { pick = &a; break; }
+                }
+                resp.text = pick->text;
+                trace << " infer=" << (pick->derived ? "derived" : "fact")
+                      << " facts=" << answers.size();
+                if (!pick->path.empty()) {
+                    trace << " via=";
+                    for (size_t i = 0; i < pick->path.size(); ++i) {
+                        if (i) trace << ",";
+                        trace << pick->path[i];
+                    }
+                }
+                self_.reward(0.05);
+                deduced = true;
+            }
+        }
+
+        if (deduced) {
+            // answered above
+        } else if (!speech.empty()) {
             resp.text = speech;
             trace << " voice=yes";
             if (identity_q) self_.focus(0.05);
@@ -248,6 +303,7 @@ size_t Engine::learn_file(const std::string& path) {
         HdcVec av = Encoder::text_assoc(line, sem_);
         memory_.record("heard", line, self_.tint(v), self_.tint(av));
         sem_.observe(line, 1.0);
+        infer_.learn(line);
         ++n;
     }
     if (n > 0) {

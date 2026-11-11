@@ -6,6 +6,8 @@
 //     :state        - show self vector sim + chem
 //     :mem          - show memory size + recent records
 //     :sim <a> <b>  - co-occurrence similarity between two tokens
+//     :facts <主题>  - facts stored about a subject
+//     :why <主题>    - deductions, with the chain that produced them
 //     :good <key>   - mark last response's first cited key as good
 //     :bad <key>    - mark as bad
 //     :quit
@@ -117,7 +119,7 @@ int main(int argc, char** argv) {
               << " voice=" << (engine.voice().learned() ? "learned" : "silent")
               << " sem_vocab=" << engine.semantics().vocab() << "\n";
     std::cout << "Type text, or 'img:<path>' for an image.\n"
-              << "Commands: :learn <file> :sleep :state :mem :words :sim [a b] :good :bad :quit\n";
+              << "Commands: :learn <file> :sleep :state :mem :words :sim :facts :why :good :bad :quit\n";
 
     std::string last_key;
     std::string line;
@@ -197,6 +199,37 @@ int main(int argc, char** argv) {
             } else {
                 std::cout << "usage: :sim <token-a> <token-b>\n";
             }
+            continue;
+        }
+
+        if (line.substr(0,6) == ":facts") {
+            std::string topic = line.size() > 7 ? line.substr(7) : "";
+            auto& inf = engine.inference();
+            std::cout << "facts=" << inf.facts() << " subjects=" << inf.subjects() << "\n";
+            if (!topic.empty()) {
+                auto ans = inf.ask(topic);
+                if (ans.empty()) std::cout << "nothing known about " << topic << "\n";
+                for (const auto& a : ans) {
+                    std::cout << "  " << (a.derived ? "[推断] " : "[事实] ") << a.text << "\n";
+                }
+            }
+            continue;
+        }
+        if (line.substr(0,4) == ":why") {
+            std::string topic = line.size() > 5 ? line.substr(5) : "";
+            if (topic.empty()) {
+                std::cout << "usage: :why <主题>\n";
+                continue;
+            }
+            auto ans = engine.inference().ask(topic);
+            int shown = 0;
+            for (const auto& a : ans) {
+                if (!a.derived) continue;
+                std::cout << a.text << "\n";
+                for (const auto& step : a.path) std::cout << "  因为 " << step << "\n";
+                ++shown;
+            }
+            if (shown == 0) std::cout << "no deduction available for " << topic << "\n";
             continue;
         }
 

@@ -21,6 +21,7 @@ add_executable(thalia
     src/self.cpp
     src/memory.cpp
     src/semantics.cpp
+    src/inference.cpp
     src/engine.cpp src/speaker.cpp
     src/main.cpp
 )
