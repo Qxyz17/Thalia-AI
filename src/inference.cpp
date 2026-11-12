@@ -14,6 +14,23 @@ const char* kWorseWord = "比";
 // A token carries content (as opposed to punctuation).
 bool content(const std::string& t) { return is_word_token(t); }
 
+// Split on spaces. The shared tokenizer splits CJK per character, which
+// erases word boundaries; the fact layer needs them ("太阳" as one word,
+// not 太 + 阳). Space-separated input is the corpus convention.
+std::vector<std::string> words(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
 // Join tokens back into a phrase, no spaces (Chinese has none between
 // characters, and the tokenizer splits CJK per character).
 std::string join(const std::vector<std::string>& toks, size_t from, size_t to) {
@@ -60,22 +77,29 @@ bool Inference::known(const std::string& subject) const {
 }
 
 void Inference::learn(const std::string& text) {
-    auto toks = tokenize(text);
+    auto toks = words(text);
     if (toks.size() < 3) return;
 
-    // Subject is the leading content run.
-    size_t i = 0;
-    while (i < toks.size() && !content(toks[i])) ++i;
-    size_t s0 = i;
-    while (i < toks.size() && content(toks[i])) ++i;
-    std::string subj = join(toks, s0, i);
-    if (subj.empty() || i >= toks.size()) return;
+    // Locate the first relation cue. Everything before it is the subject.
+    static const char* kCues[] = {"是", "有", "会", "喜欢", "需要", "用", "在", "比"};
+    size_t cut = toks.size();
+    std::string cue;
+    for (size_t k = 0; k < toks.size(); ++k) {
+        for (const char* c : kCues) {
+            if (toks[k] == c) { cut = k; cue = c; break; }
+        }
+        if (cut != toks.size()) break;
+    }
+    if (cut == toks.size()) return;   // no relation: nothing to store
 
-    // join() stops at the first non-content token, so the trailing period
-    // is already excluded.
+    // Subject: the content run immediately before the cue.
+    size_t s0 = cut;
+    while (s0 > 0 && content(toks[s0 - 1])) --s0;
+    std::string subj = join(toks, s0, cut);
+    if (subj.empty()) return;
+
     auto tail = [&](size_t from) { return join(toks, from, toks.size()); };
-
-    std::string cue = toks[i];
+    size_t i = cut;   // index of the cue token
 
     if (cue == kIsWord) {
         std::string obj = tail(i + 1);
@@ -137,6 +161,17 @@ void Inference::learn(const std::string& text) {
     if (!tail_txt.empty()) add(subj, DOES, tail_txt);
 }
 
+void Inference::rebuild(const Memory& mem) {
+    triples_.clear();
+    seen_.clear();
+    by_subject_.clear();
+    for (const auto& [key, rec] : mem.all()) {
+        if (rec.kind == "image") continue;   // file paths, not language
+        if (rec.raw_full.empty()) continue;
+        learn(rec.raw_full);
+    }
+}
+
 std::vector<size_t> Inference::outgoing(const std::string& a, Rel rel) const {
     std::vector<size_t> out;
     auto it = by_subject_.find(a);
@@ -145,21 +180,6 @@ std::vector<size_t> Inference::outgoing(const std::string& a, Rel rel) const {
         if (triples_[idx].rel == rel) out.push_back(idx);
     }
     return out;
-}
-
-std::vector<std::string> Inference::is_chain(const std::string& a, int depth) const {
-    std::vector<std::string> chain;
-    std::set<std::string> seen{a};
-    std::string cur = a;
-    for (int d = 0; d < depth; ++d) {
-        auto outs = outgoing(cur, IS);
-        if (outs.empty()) break;
-        std::string next = triples_[outs.front()].b;
-        if (!seen.insert(next).second) break;
-        chain.push_back(next);
-        cur = next;
-    }
-    return chain;
 }
 
 std::vector<Inference::Answer> Inference::ask(const std::string& subject) const {
@@ -183,53 +203,33 @@ std::vector<Inference::Answer> Inference::ask(const std::string& subject) const 
     }
 
     // 2. Inheritance: what the classes of `subject` can do / have / are.
-    auto chain = is_chain(subject, 3);
-    for (const auto& cls : chain) {
-        auto cit = by_subject_.find(cls);
-        if (cit == by_subject_.end()) continue;
-        for (size_t idx : cit->second) {
-            const Triple& t = triples_[idx];
-            // Only inheritable relations: properties, not opinions about
-            // the class as an individual.
-            if (t.rel != CAN && t.rel != HAS && t.rel != IS) continue;
-            Answer a;
-            a.text = subject + rel_name(t.rel) + t.b;
-            a.path.push_back(subject + "是" + cls);
-            a.path.push_back(t.a + rel_name(t.rel) + t.b);
-            a.derived = true;
-            out.push_back(a);
-        }
-    }
-    return out;
-}
+    //    Walk the IS chain one hop at a time, so an inferred fact carries
+    //    the whole derivation, not just its first step.
+    std::set<std::string> seen;
+    seen.insert(subject);
+    std::string cur = subject;
+    for (int hop = 0; hop < 3; ++hop) {
+        auto outs = outgoing(cur, IS);
+        if (outs.empty()) break;
+        std::string cls = triples_[outs.front()].b;
+        if (!seen.insert(cls).second) break;
 
-std::vector<Inference::Answer> Inference::ask(const std::string& subject,
-                                              Rel rel) const {
-    std::vector<Answer> out;
-    auto it = by_subject_.find(subject);
-    if (it != by_subject_.end()) {
-        for (size_t idx : it->second) {
-            const Triple& t = triples_[idx];
-            if (t.rel != rel) continue;
-            Answer a;
-            a.text = (rel == DOES) ? t.a + t.b : t.a + rel_name(rel) + t.b;
-            out.push_back(a);
-        }
-    }
-    // Then anything the classes imply for this relation.
-    for (const auto& cls : is_chain(subject, 3)) {
+        std::string step = cur + "是" + cls;
         auto cit = by_subject_.find(cls);
-        if (cit == by_subject_.end()) continue;
-        for (size_t idx : cit->second) {
-            const Triple& t = triples_[idx];
-            if (t.rel != rel) continue;
-            Answer a;
-            a.text = subject + rel_name(rel) + t.b;
-            a.path.push_back(subject + "是" + cls);
-            a.path.push_back(t.a + rel_name(rel) + t.b);
-            a.derived = true;
-            out.push_back(a);
+        if (cit != by_subject_.end()) {
+            for (size_t idx : cit->second) {
+                const Triple& t = triples_[idx];
+                if (t.rel != CAN && t.rel != HAS && t.rel != IS) continue;
+                Answer a;
+                a.text = subject + rel_name(t.rel) + t.b;
+                if (t.rel == IS) a.text = subject + "是" + t.b;
+                a.path.push_back(step);
+                a.path.push_back(t.a + (t.rel == DOES ? "" : rel_name(t.rel)) + t.b);
+                a.derived = true;
+                out.push_back(a);
+            }
         }
+        cur = cls;
     }
     return out;
 }

@@ -165,7 +165,35 @@ OUT=$(printf '%s\n' 'hello' ':quit' | $BIN --store ./t15d --seed "fixed" 2>&1)
 if echo "$OUT" | grep -q "auto seed:"; then echo "FAIL: T16"; FAIL=$((FAIL+1));
 else echo "PASS: T16"; PASS=$((PASS+1)); fi
 
-rm -rf t1d t4d t5d t6d t7d t9d t10d t12d t14d t15d ./tmpd/thalia_t5_a.bin ./tmpd/thalia_t5_b.bin ./tmpd/thalia_corpus.txt ./tmpd/thalia_sem.txt ./tmpd/thalia_dog.txt
+echo "=== T17: 推断未直接说过的话 ==="
+rm -rf t17d
+cat > ./tmpd/thalia_infer.txt <<'EOF'
+动物 会 呼吸 。
+狗 是 动物 。
+狗 会 跑 。
+孩子 是 人 。
+人 是 动物 。
+人 会 走路 。
+EOF
+OUT=$(printf ':learn ./tmpd/thalia_infer.txt\n:facts 狗\n:facts 孩子\n:why 孩子\n:quit\n' \
+      | $BIN --store ./t17d --seed "t17" 2>&1)
+check "T17a learned" "learned 6 lines"
+# 狗 是 动物, 动物 会 呼吸 -> 狗 会 呼吸（语料里没这句）
+if echo "$OUT" | grep -q '\[推断\] 狗会呼吸'; then echo "PASS: T17b 狗会呼吸"; PASS=$((PASS+1));
+else echo "FAIL: T17b (推不出 狗会呼吸)"; FAIL=$((FAIL+1)); fi
+# 孩子 是 人, 人 是 动物 -> 孩子 是 动物（两跳）
+if echo "$OUT" | grep -q '\[推断\] 孩子是动物'; then echo "PASS: T17c 孩子是动物"; PASS=$((PASS+1));
+else echo "FAIL: T17c (推不出 孩子是动物)"; FAIL=$((FAIL+1)); fi
+# 推理路径必须给出链条
+if echo "$OUT" | grep -q '因为 人是动物'; then echo "PASS: T17d 推理链"; PASS=$((PASS+1));
+else echo "FAIL: T17d (没有推理链)"; FAIL=$((FAIL+1)); fi
+
+echo "=== T18: 直接提问走推理而不是复读 ==="
+OUT=$(printf '狗 会 什么\n:quit\n' | $BIN --store ./t17d --seed "t17" 2>&1)
+if echo "$OUT" | grep -q 'infer=derived'; then echo "PASS: T18 推理应答"; PASS=$((PASS+1));
+else echo "FAIL: T18 (没有走推理路径)"; FAIL=$((FAIL+1)); fi
+
+rm -rf t1d t4d t5d t6d t7d t9d t10d t12d t14d t15d t17d ./tmpd/thalia_t5_a.bin ./tmpd/thalia_t5_b.bin ./tmpd/thalia_corpus.txt ./tmpd/thalia_sem.txt ./tmpd/thalia_dog.txt ./tmpd/thalia_infer.txt
 echo ""
 echo "==============================="
 echo "PASS=$PASS FAIL=$FAIL"

@@ -27,6 +27,7 @@
 // Nothing here is learned by gradient descent: a fact is a string triple,
 // and a deduction is a walk over the triples that are already stored.
 #pragma once
+#include "memory.h"
 #include <map>
 #include <set>
 #include <string>
@@ -65,12 +66,14 @@ public:
     // Pull every relation out of one line of text.
     void learn(const std::string& text);
 
+    // Replay every language-bearing memory record through learn(), so the
+    // fact base survives a restart (same pattern as Semantics::load and
+    // Speaker::rebuild: the log is the source of truth, not this object).
+    void rebuild(const Memory& mem);
+
     // All answers Thalia can produce about `subject`, direct or derived.
     // Empty if it knows nothing about it.
     std::vector<Answer> ask(const std::string& subject) const;
-
-    // Answer one relation specifically (used by :why).
-    std::vector<Answer> ask(const std::string& subject, Rel rel) const;
 
     size_t facts() const { return triples_.size(); }
     size_t subjects() const;
@@ -89,8 +92,9 @@ private:
              const std::string& c = "");
     std::vector<size_t> outgoing(const std::string& a, Rel rel) const;
 
-    // Follow IS from `a` up to `depth` hops; returns every class reached.
-    std::vector<std::string> is_chain(const std::string& a, int depth) const;
+    // Follow IS from `a` up to `depth` hops; returns the classes reached,
+    // each as a step string ("a是b" for the first hop, "b是c" for the next).
+    std::vector<std::string> is_steps(const std::string& a, int depth) const;
 };
 
 }  // namespace thalia

@@ -63,21 +63,66 @@ jobs:
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: thalia-linux-x86_64.tar.gz
+          - os: windows-latest
+            asset: thalia-windows-x86_64.zip
+          - os: macos-latest
+            asset: thalia-macos-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Linux binary
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-openssl
+
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: brew install openssl@3
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         run: |
-          sudo apt-get update && sudo apt-get install -y libssl-dev
+          bash scripts/build.sh
+          cd build && 7z a ../${{ matrix.asset }} thalia.exe
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
           bash scripts/build.sh
           strip build/thalia
-          tar -czf thalia-linux-x86_64.tar.gz -C build thalia
+          tar -czf ${{ matrix.asset }} -C build thalia
 
-      - name: Upload release assets
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CPLUS_INCLUDE_PATH: /opt/homebrew/opt/openssl@3/include
+          LIBRARY_PATH: /opt/homebrew/opt/openssl@3/lib
+        run: |
+          bash scripts/build.sh
+          strip build/thalia
+          tar -czf ${{ matrix.asset }} -C build thalia
+
+      - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: thalia-linux-x86_64.tar.gz
+          files: ${{ matrix.asset }}
           generate_release_notes: true

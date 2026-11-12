@@ -12,17 +12,27 @@ namespace thalia {
 constexpr double DIRECT_HIT_THRESHOLD = 0.85;  // sim above this = "I know this"
 
 // The thing a sentence is about, when it asks a question about something
-// Thalia has facts on. Leading interrogatives are dropped; the first
-// content run left is the topic. "猫 会 什么" -> "猫".
+// Thalia has facts on. Split on spaces (the corpus convention) so "狗 会
+// 什么" yields "狗"; drop a trailing cue word if the question is written
+// without spaces ("狗会什么" stays "狗会什么" and matches nothing).
 static std::string question_topic(const std::string& raw) {
-    auto toks = tokenize(raw);
-    // Drop a leading question form.
+    std::vector<std::string> toks;
+    std::string cur;
+    for (char c : raw) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            if (!cur.empty()) { toks.push_back(cur); cur.clear(); }
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) toks.push_back(cur);
+
     static const char* kLeading[] = {"什么", "为什么", "怎么", "怎样", "谁",
-                                     "哪", "是不是", "会不会", "请", "问",
-                                     "你知道", "告诉我"};
+                                     "哪", "请", "问", "你知道", "告诉我"};
+    static const char* kTrailing[] = {"什么", "为什么", "怎么", "怎样", "吗",
+                                      "呢", "了", "会", "是", "有"};
     size_t i = 0;
     for (; i < toks.size(); ++i) {
-        if (!is_word_token(toks[i])) continue;
         bool dropped = false;
         for (const char* w : kLeading) {
             if (toks[i] == w) { dropped = true; break; }
@@ -30,8 +40,10 @@ static std::string question_topic(const std::string& raw) {
         if (!dropped) break;
     }
     if (i >= toks.size()) return "";
-    std::string topic;
-    for (; i < toks.size() && is_word_token(toks[i]); ++i) topic += toks[i];
+    std::string topic = toks[i];
+    for (const char* w : kTrailing) {
+        if (topic == w) { topic.clear(); break; }
+    }
     return topic;
 }
 
@@ -56,6 +68,7 @@ Engine::Engine(const std::string& store_dir, const std::string& identity_seed)
 
     // Build the voice from whatever memory was loaded.
     voice_.rebuild(memory_);
+    infer_.rebuild(memory_);
 }
 
 void Engine::load_lexicon(const std::string& path) {
@@ -279,6 +292,7 @@ Memory::SleepReport Engine::sleep(double merge_threshold) {
 
     // 4. Rebuild the language tables (sleep consolidates language too).
     voice_.rebuild(memory_);
+    infer_.rebuild(memory_);
 
     // 5. Persist the consolidated state.
     sem_.flush();
